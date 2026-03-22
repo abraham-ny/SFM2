@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow all HTTPS traffic -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+
+    <!-- yarn.co / getyarn.io — allow both https and http for CDN thumbnails -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">getyarn.io</domain>
+        <domain includeSubdomains="true">yarn.co</domain>
+        <domain includeSubdomains="true">d2vzmrzgm6j2mq.cloudfront.net</domain>
+    </domain-config>
+
+    <!-- Google Fonts for WebView -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">fonts.googleapis.com</domain>
+        <domain includeSubdomains="true">fonts.gstatic.com</domain>
+    </domain-config>
+</network-security-config>

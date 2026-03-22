@@ -1,0 +1,32 @@
+# ── Build outputs ─────────────────────────────────────────────────────────────
+*.apk
+*.aab
+*.ap_
+*.dex
+/build/
+app/build/
+dist/
+
+# ── Gradle ────────────────────────────────────────────────────────────────────
+.gradle/
+local.properties
+gradle.properties.local
+
+# ── Signing — NEVER commit these ──────────────────────────────────────────────
+*.jks
+*.keystore
+*.pfx
+*.p12
+app/keystore.properties
+keystore_base64.txt
+
+# ── Android Studio ────────────────────────────────────────────────────────────
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
