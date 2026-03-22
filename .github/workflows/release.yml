@@ -1,17 +1,13 @@
 name: Release APK
 
-# ─── Trigger ──────────────────────────────────────────────────────────────────
-# Fires on any tag that starts with "v" (e.g. v1.0.0, v2.3.1-beta)
 on:
   push:
     tags:
       - 'v*'
 
-# ─── Permissions ─────────────────────────────────────────────────────────────
 permissions:
-  contents: write   # needed to create GitHub Releases and upload assets
+  contents: write
 
-# ─── Jobs ────────────────────────────────────────────────────────────────────
 jobs:
   build:
     name: Build & Sign Release APK
@@ -19,13 +15,13 @@ jobs:
 
     steps:
 
-    # 1. Checkout full source
+    # 1. Checkout
     - name: Checkout source
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    # 2. Set up JDK 17 (required by AGP 8.x)
+    # 2. Java
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -33,76 +29,73 @@ jobs:
         distribution: 'temurin'
         cache: 'gradle'
 
-    # 3. Cache Gradle + Android SDK components
-    - name: Cache Gradle wrapper
-      uses: actions/cache@v4
-      with:
-        path: ~/.gradle/wrapper
-        key: gradle-wrapper-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+    # 3. Ensure Android SDK path
+    - name: Set Android SDK path
+      run: |
+        echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
 
-    - name: Cache Gradle caches
+    # 4. Cache Gradle (ONLY useful cache)
+    - name: Cache Gradle
       uses: actions/cache@v4
       with:
-        path: ~/.gradle/caches
-        key: gradle-caches-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        path: |
+          ~/.gradle/wrapper
+          ~/.gradle/caches
+        key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
         restore-keys: |
-          gradle-caches-${{ runner.os }}-
+          gradle-${{ runner.os }}-
 
-    - name: Cache Android SDK
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.ANDROID_SDK_ROOT }}
-        key: android-sdk-${{ runner.os }}-34
-
-    # 4. Grant gradlew execute permission
+    # 5. Make gradlew executable
     - name: Make gradlew executable
       run: chmod +x ./gradlew
 
-    # 5. Decode the keystore from the base64 secret
-    #    Store a base64-encoded .jks in secret KEYSTORE_BASE64
+    # 6. Decode keystore
     - name: Decode keystore
       env:
         KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
       run: |
-        echo "$KEYSTORE_BASE64" | base64 --decode > ${{ github.workspace }}/release.jks
+        echo "$KEYSTORE_BASE64" | base64 --decode > release.jks
 
-    # 6. Extract the tag name for versioning (strips leading "v")
-    - name: Extract version from tag
+    # 7. Extract version from tag
+    - name: Extract version
       id: version
       run: |
         TAG="${GITHUB_REF#refs/tags/}"
         VERSION="${TAG#v}"
-        echo "tag=$TAG"         >> $GITHUB_OUTPUT
+
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        # Compute versionCode: major*10000 + minor*100 + patch
-        # e.g. v1.2.3 → 10203   v1.0.0 → 10000   v2.0.0 → 20000
+
         MAJOR=$(echo "$VERSION" | cut -d. -f1 | grep -o '^[0-9]*')
         MINOR=$(echo "$VERSION" | cut -d. -f2 | grep -o '^[0-9]*')
         PATCH=$(echo "$VERSION" | cut -d. -f3 | grep -o '^[0-9]*')
-        MAJOR=${MAJOR:-1}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
-        CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
-        echo "versionCode=$CODE" >> $GITHUB_OUTPUT
-        echo "Tag=$TAG  Version=$VERSION  Code=$CODE"
 
-    # 7. Inject versionName + versionCode into build.gradle
-    - name: Stamp version into build.gradle
+        MAJOR=${MAJOR:-1}
+        MINOR=${MINOR:-0}
+        PATCH=${PATCH:-0}
+
+        CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+
+        echo "versionCode=$CODE" >> $GITHUB_OUTPUT
+
+        echo "Tag=$TAG Version=$VERSION Code=$CODE"
+
+    # 8. Inject version into Gradle
+    - name: Stamp version
       run: |
-        sed -i \
-          "s/versionCode .*/versionCode ${{ steps.version.outputs.versionCode }}/" \
-          app/build.gradle
-        sed -i \
-          "s/versionName .*/versionName \"${{ steps.version.outputs.version }}\"/" \
-          app/build.gradle
-        echo "--- app/build.gradle after stamp ---"
+        sed -i "s/versionCode .*/versionCode ${{ steps.version.outputs.versionCode }}/" app/build.gradle
+        sed -i "s/versionName .*/versionName \"${{ steps.version.outputs.version }}\"/" app/build.gradle
+
+        echo "--- VERSION CHECK ---"
         grep -E 'versionCode|versionName' app/build.gradle
 
-    # 8. Build the release APK (unsigned first via assembleRelease)
+    # 9. Build release APK
     - name: Build release APK
       env:
-        KEYSTORE_PATH:      ${{ github.workspace }}/release.jks
-        KEYSTORE_PASSWORD:  ${{ secrets.KEYSTORE_PASSWORD }}
-        KEY_ALIAS:          ${{ secrets.KEY_ALIAS }}
-        KEY_PASSWORD:       ${{ secrets.KEY_PASSWORD }}
+        KEYSTORE_PATH: release.jks
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: |
         ./gradlew assembleRelease \
           -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
@@ -112,51 +105,48 @@ jobs:
           --stacktrace \
           --no-daemon
 
-    # 9. Rename APK to include version tag
+    # 10. Rename APK
     - name: Rename APK
       run: |
         mkdir -p dist
         cp app/build/outputs/apk/release/app-release.apk \
            dist/SceneFind-${{ steps.version.outputs.tag }}.apk
-        echo "APK size: $(du -sh dist/SceneFind-${{ steps.version.outputs.tag }}.apk)"
 
-    # 10. Upload APK as workflow artifact (always available, even without a Release)
-    - name: Upload APK artifact
+        echo "APK SIZE:"
+        du -sh dist/*
+
+    # 11. Upload artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: SceneFind-${{ steps.version.outputs.tag }}
         path: dist/SceneFind-${{ steps.version.outputs.tag }}.apk
         retention-days: 90
 
-    # 11. Create GitHub Release and attach the APK
-    - name: Create GitHub Release
+    # 12. Create GitHub Release
+    - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
-        tag_name:   ${{ steps.version.outputs.tag }}
-        name:       "SceneFind ${{ steps.version.outputs.tag }}"
-        body:       |
+        tag_name: ${{ steps.version.outputs.tag }}
+        name: SceneFind ${{ steps.version.outputs.tag }}
+        body: |
           ## SceneFind ${{ steps.version.outputs.tag }}
 
-          ### Install
-          Download **SceneFind-${{ steps.version.outputs.tag }}.apk** below and sideload it.
-          You may need to allow *Install from unknown sources* in Android Settings.
+          Download the APK below and install manually.
 
           ### Requirements
           - Android 4.4+ (API 19)
-          - Microphone permission
           - Internet connection
+          - Microphone permission
 
-          ### What's new
-          _See commit history for changes in this release._
-        draft:      false
+        files: dist/SceneFind-${{ steps.version.outputs.tag }}.apk
         prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
-        files:      dist/SceneFind-${{ steps.version.outputs.tag }}.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-# ─── Build-only job for non-tag pushes / PRs (debug, no signing) ─────────────
+  # Debug builds (non-tags)
   build-debug:
-    name: Build Debug APK (PR / branch check)
+    name: Debug Build
     runs-on: ubuntu-22.04
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
 
@@ -170,13 +160,8 @@ jobs:
         distribution: 'temurin'
         cache: 'gradle'
 
-    - name: Cache Gradle
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/wrapper
-          ~/.gradle/caches
-        key: gradle-debug-${{ runner.os }}-${{ hashFiles('**/*.gradle*') }}
+    - name: Set SDK path
+      run: echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
 
     - name: Make gradlew executable
       run: chmod +x ./gradlew
@@ -187,6 +172,5 @@ jobs:
     - name: Upload debug APK
       uses: actions/upload-artifact@v4
       with:
-        name: SceneFind-debug-${{ github.sha }}
+        name: debug-${{ github.sha }}
         path: app/build/outputs/apk/debug/app-debug.apk
-        retention-days: 14
